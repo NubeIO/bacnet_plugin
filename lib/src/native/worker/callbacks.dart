@@ -45,7 +45,7 @@ void onIAm(
   // Without this, ReadPropertyMultiple and other requests will timeout
   // because the stack doesn't know where to send them.
   try {
-    bindings.address_add_binding(deviceId, maxAPDU, src);
+    bindings.address_add(deviceId, maxAPDU, src);
     logToMain(
       BacnetLogLevel.info,
       'Stored address binding for device $deviceId',

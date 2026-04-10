@@ -1,14 +1,17 @@
 #include "bacnet_plugin.h"
 #include <setjmp.h>
-#include <windows.h>
 #include <stdio.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 /* Global jump buffer to intercept exit() calls */
 static jmp_buf g_exit_jmp;
 static bool g_jmp_active = false;
 
-/* 
- * Custom exit handler to prevent the native library from terminating the entire 
+/*
+ * Custom exit handler to prevent the native library from terminating the entire
  * Flutter process. Redefined via CMake: -Dexit=bacnet_plugin_exit_handler
  */
 #ifdef _WIN32
@@ -18,15 +21,34 @@ void bacnet_plugin_exit_handler(int code)
 {
     char buf[256];
     sprintf(buf, "BACnet Native Exit Intercepted: code %d\n", code);
+#ifdef _WIN32
     OutputDebugStringA(buf);
-    
+#else
+    fprintf(stderr, "%s", buf);
+#endif
+
     if (g_jmp_active) {
         longjmp(g_exit_jmp, 1);
     }
-    
+
     /* Fallback if jump is not active (should not happen in wrapped calls) */
+#ifdef _WIN32
     TerminateThread(GetCurrentThread(), code);
+#else
+    pthread_exit(NULL);
+#endif
 }
+
+/* Helper macro for safe wrapper functions.
+ * On Windows, uses SEH (__try/__except) for crash protection.
+ * On Linux, uses plain setjmp/longjmp (no SEH available). */
+#ifdef _WIN32
+#define SAFE_WRAP_BEGIN  __try { g_jmp_active = true; if (setjmp(g_exit_jmp) == 0) {
+#define SAFE_WRAP_EXIT(msg, fail_val) } else { OutputDebugStringA(msg " Intercepted exit()\n"); fail_val; } } __except(EXCEPTION_EXECUTE_HANDLER) { OutputDebugStringA(msg " Caught Access Violation/Crash!\n"); fail_val; } g_jmp_active = false;
+#else
+#define SAFE_WRAP_BEGIN  g_jmp_active = true; if (setjmp(g_exit_jmp) == 0) {
+#define SAFE_WRAP_EXIT(msg, fail_val) } else { fprintf(stderr, "%s Intercepted exit()\n", msg); fail_val; } g_jmp_active = false;
+#endif
 
 /* Wrapper to simplify calling Send_Write_Property_Multiple_Request */
 uint8_t bacnet_plugin_send_write_property_multiple(
@@ -34,20 +56,10 @@ uint8_t bacnet_plugin_send_write_property_multiple(
     BACNET_WRITE_ACCESS_DATA *write_access_data)
 {
     uint8_t result = 0;
-    __try {
-        g_jmp_active = true;
-        if (setjmp(g_exit_jmp) == 0) {
-            uint8_t pdu[MAX_APDU] = {0};
-            result = Send_Write_Property_Multiple_Request(pdu, sizeof(pdu), device_id, write_access_data);
-        } else {
-            OutputDebugStringA("BACnet WPM: Intercepted exit()\n");
-            result = 0;
-        }
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        OutputDebugStringA("BACnet WPM: Caught Access Violation/Crash!\n");
-        result = 0;
-    }
-    g_jmp_active = false;
+    SAFE_WRAP_BEGIN
+        uint8_t pdu[MAX_APDU] = {0};
+        result = Send_Write_Property_Multiple_Request(pdu, sizeof(pdu), device_id, write_access_data);
+    SAFE_WRAP_EXIT("BACnet WPM:", result = 0)
     return result;
 }
 
@@ -56,57 +68,27 @@ uint8_t bacnet_plugin_send_read_range_request(
     BACNET_READ_RANGE_DATA *read_range_data)
 {
     uint8_t result = 0;
-    __try {
-        g_jmp_active = true;
-        if (setjmp(g_exit_jmp) == 0) {
-            result = Send_ReadRange_Request(device_id, read_range_data);
-        } else {
-            OutputDebugStringA("BACnet ReadRange: Intercepted exit()\n");
-            result = 0;
-        }
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        OutputDebugStringA("BACnet ReadRange: Caught Access Violation/Crash!\n");
-        result = 0;
-    }
-    g_jmp_active = false;
+    SAFE_WRAP_BEGIN
+        result = Send_ReadRange_Request(device_id, read_range_data);
+    SAFE_WRAP_EXIT("BACnet ReadRange:", result = 0)
     return result;
 }
 
 bool bacnet_plugin_safe_bip_init(char *ifname)
 {
     bool result = false;
-    __try {
-        g_jmp_active = true;
-        if (setjmp(g_exit_jmp) == 0) {
-            result = bip_init(ifname);
-        } else {
-            OutputDebugStringA("BACnet safe_bip_init: Intercepted exit()\n");
-            result = false;
-        }
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        OutputDebugStringA("BACnet safe_bip_init: Caught Access Violation/Crash!\n");
-        result = false;
-    }
-    g_jmp_active = false;
+    SAFE_WRAP_BEGIN
+        result = bip_init(ifname);
+    SAFE_WRAP_EXIT("BACnet safe_bip_init:", result = false)
     return result;
 }
 
 bool bacnet_plugin_safe_datalink_init(char *ifname)
 {
     bool result = false;
-    __try {
-        g_jmp_active = true;
-        if (setjmp(g_exit_jmp) == 0) {
-            result = datalink_init(ifname);
-        } else {
-            OutputDebugStringA("BACnet safe_datalink_init: Intercepted exit()\n");
-            result = false;
-        }
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        OutputDebugStringA("BACnet safe_datalink_init: Caught Access Violation/Crash!\n");
-        result = false;
-    }
-    g_jmp_active = false;
+    SAFE_WRAP_BEGIN
+        result = datalink_init(ifname);
+    SAFE_WRAP_EXIT("BACnet safe_datalink_init:", result = false)
     return result;
 }
 
@@ -117,19 +99,9 @@ int bacnet_plugin_safe_bip_receive(
     unsigned timeout)
 {
     int result = 0;
-    __try {
-        g_jmp_active = true;
-        if (setjmp(g_exit_jmp) == 0) {
-            result = bip_receive(src, npdu, max_npdu, timeout);
-        } else {
-            OutputDebugStringA("BACnet safe_bip_receive: Intercepted exit()\n");
-            result = -1;
-        }
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        OutputDebugStringA("BACnet safe_bip_receive: Caught Access Violation/Crash!\n");
-        result = -1;
-    }
-    g_jmp_active = false;
+    SAFE_WRAP_BEGIN
+        result = bip_receive(src, npdu, max_npdu, timeout);
+    SAFE_WRAP_EXIT("BACnet safe_bip_receive:", result = -1)
     return result;
 }
 
@@ -138,15 +110,7 @@ void bacnet_plugin_safe_npdu_handler(
     uint8_t *npdu,
     uint16_t pdu_len)
 {
-    __try {
-        g_jmp_active = true;
-        if (setjmp(g_exit_jmp) == 0) {
-            npdu_handler(src, npdu, pdu_len);
-        } else {
-            OutputDebugStringA("BACnet safe_npdu_handler: Intercepted exit()\n");
-        }
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        OutputDebugStringA("BACnet safe_npdu_handler: Caught Access Violation/Crash!\n");
-    }
-    g_jmp_active = false;
+    SAFE_WRAP_BEGIN
+        npdu_handler(src, npdu, pdu_len);
+    SAFE_WRAP_EXIT("BACnet safe_npdu_handler:", (void)0)
 }

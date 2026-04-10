@@ -115,6 +115,7 @@ void bacnetWorkerEntryPoint(Map<String, dynamic> args) {
 
     workerToMainSendPort?.send(receivePort.sendPort);
 
+    var _lastTsmTime = DateTime.now().millisecondsSinceEpoch;
     Timer.periodic(const Duration(milliseconds: 10), (_) {
       try {
         int pduLen = bindings.bacnet_plugin_safe_bip_receive(
@@ -131,9 +132,10 @@ void bacnetWorkerEntryPoint(Map<String, dynamic> args) {
             pduLen,
           );
         }
-        bindings.tsm_timer_milliseconds(
-          DateTime.now().millisecondsSinceEpoch & 0xFFFFFFFF,
-        );
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final elapsed = now - _lastTsmTime;
+        _lastTsmTime = now;
+        bindings.tsm_timer_milliseconds(elapsed & 0xFFFF);
       } on Exception {
         /* suppress */
       }
