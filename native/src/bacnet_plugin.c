@@ -4,6 +4,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <pthread.h>
 #endif
 
 /* Global jump buffer to intercept exit() calls */
